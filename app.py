@@ -1,10 +1,8 @@
 import torch
-from torchvision import transforms
-from torchvision import models
+from torchvision import transforms, models, datasets
 import torch.nn as nn
-from PIL import Image, ImageDraw, ImageFont
-from torchvision import datasets, transforms
 from torch.utils.data import DataLoader
+from PIL import Image
 import numpy as np
 import cv2
 
@@ -26,47 +24,39 @@ model = models.resnet18(pretrained=False)
 model.fc = nn.Linear(model.fc.in_features, len(dataset.classes))
 model.load_state_dict(torch.load("face_recognition_model.pth"))
 model.eval()
+model = model.to(device)
 
-def predict(image_path):
-    image = Image.open(image_path).convert("RGB")
-    input_tensor = transform(image).unsqueeze(0)
-    input_tensor = input_tensor.to(device)
-
+def predict_face(face_image):
+    input_tensor = transform(face_image).unsqueeze(0).to(device)
     with torch.no_grad():
         output = model(input_tensor)
-        _, predicted = torch.max(output, 1)
+        probabilities = torch.softmax(output, dim=1)
+        confidence, predicted = torch.max(probabilities, 1)
         class_idx = predicted.item()
-    
-    return dataset.classes[class_idx], image
+    return dataset.classes[class_idx], confidence.item()
 
-def draw_label(image, label, coordinates=(50, 50)):
-    cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-
-    font = cv2.FONT_HERSHEY_SIMPLEX
-
-    cv2.putText(cv_image, label, coordinates, font, 1, (0, 255, 0), 2, cv2.LINE_AA)
-
-    return cv_image
-
-def detect_faces_and_draw(image_path, label):
+def detect_faces_and_classify(image_path, output_path="result.jpg"):
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
 
     image = cv2.imread(image_path)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
 
     for (x, y, w, h) in faces:
-        cv2.rectangle(image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-    
-    image = draw_label(Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB)), label, coordinates=(10, 30))
+        face = image[y:y+h, x:x+w]
+        face_pil = Image.fromarray(cv2.cvtColor(face, cv2.COLOR_BGR2RGB)).convert("RGB")
 
-    cv2.imwrite("result.jpg", image)
+        label, confidence = predict_face(face_pil)
+
+        label_with_confidence = f"{label} ({confidence:.2f})"
+
+        cv2.rectangle(image, (x, y), (x+w, y+h), (0, 255, 0), 2)
+
+        cv2.putText(image, label_with_confidence, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36, 255, 12), 2)
+
+    cv2.imwrite(output_path, image)
+    print(f"Result saved to {output_path}")
 
 test_image_path = "test5.jpg"
-
-predicted_label, image = predict(test_image_path)
-
-detect_faces_and_draw(test_image_path, predicted_label)
-
-print(f"Classe prevista: {predicted_label}")
+detect_faces_and_classify(test_image_path)
